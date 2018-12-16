@@ -62,6 +62,75 @@ int get_conf(char *file_name, struct conf_struct *conf_struct) {
     return 1;
 }
 
+void list(int sock, char *path) {
+    int max = 0;
+    FILE *f;
+    int nbytes;
+    char ls[MAXBUFSIZE];
+    snprintf(ls, MAXBUFSIZE, "ls -a %s", path);
+    
+    f = popen(ls, "r");
+    char buf[MAXBUFSIZE];
+    while(fgets(buf, sizeof(buf), f) != 0) {
+        max++;
+    }
+    pclose(f);
+    nbytes = send(sock, &max, sizeof(max), 0);
+    f = popen(ls, "r");
+    if(max > 2) {
+        while(fgets(buf, sizeof(buf), f) != 0) {
+            send(sock, buf, MAXBUFSIZE, 0);
+        }
+    }   
+    
+}
+
+void put(int sock, char* path, char* file_name, int file_part, struct files_list_struct *file_list) {
+    FILE *f;
+    char server_path[MAXBUFSIZE];
+    char file_buffer[MAXBUFSIZE];
+    char return_message[MAXBUFSIZE];
+
+    int nbytes;
+    unsigned char ch;
+
+    snprintf(server_path, MAXBUFSIZE, "./%s.%s.%d", path, file_name, file_part);
+    printf("Server path is %s", server_path);
+    f = fopen(server_path, "w+b");
+    if(f != NULL) {
+        int total = 0;
+        long file_size = 0;
+
+        //Receive the size of the file
+        recv(sock, &file_size, sizeof(file_size), 0);
+        // printf("File size: %d\n", file_size);
+
+        while(total < file_size) {
+            nbytes = recv(sock, &ch, sizeof(ch), 0);
+            if(nbytes < 0) {
+                perror("error receiving");
+            }
+            fputc(ch, f);
+            total += nbytes;
+            memset(&file_buffer, 0, MAXBUFSIZE);
+        }
+        printf("File written\n");
+        fclose(f);
+
+        //Check if we already have this entry
+        if(strcmp(file_list->file_name[file_list->count], file_name) == 0) {
+            file_list->partB = file_part;
+            file_list->count++;
+        } else {
+            strcpy(file_list->file_name[file_list->count], file_name);
+            file_list->partA = file_part;
+        }
+        
+    } else {
+        snprintf(return_message, MAXBUFSIZE, "Could not write to file.");
+        send(sock, return_message, MAXBUFSIZE, 0);
+    }
+}
 int main(int argc , char *argv[]) {
     if(argc < 3) {
         printf("USAGE: ./dfs [FOLDER] [PORT NUMBER]\n");
@@ -183,7 +252,49 @@ int main(int argc , char *argv[]) {
                 }
                 memset(&client_message, 0, MAXBUFSIZE);
             }
+            //Receive a message from client
+            while( (read_size = recv(client_sock , client_message , MAXBUFSIZE , 0)) > 0 ) {
+ 
+                //clear the buffers
+                memset(&user_cmd, 0, MAXBUFSIZE);
+                memset(&user_file, 0, MAXBUFSIZE);
+                memset(&file_part, 0, MAXBUFSIZE);
+                
+                int file_partNum = 0;
+                
+                
+                //read in the client request in format "[COMMAND] [/PATH/FILE] [PART NUMBER]"
+                sscanf(client_message, "%s %s %s", user_cmd, user_file, file_part);
+                file_partNum = atoi(file_part);
+                
+                char extractedPath[MAXBUFSIZE];
+                char extractedFile[MAXBUFSIZE];
+                //Extract path and file_name into two parts
+                //Find the last occurence in the string
+                const char *dot = strrchr(user_file, '/');
+                if(dot == NULL) {
+                    // strcpy(dot, "\n");
+                }
+                char* token = strtok(user_file, dot);
+                snprintf(extractedPath, MAXBUFSIZE, "%s", token);
+                snprintf(extractedFile, MAXBUFSIZE, "%s", dot+1);
+                printf("Path is %s ", path);
+                //Test against user commands and process requests
+                if( (strcmp(user_cmd, "LIST") == 0) || (strcmp(user_cmd, "list") == 0) ) {
+                    list(client_sock, path);
+                } else if( (strcmp(user_cmd, "PUT") == 0) || (strcmp(user_cmd, "put") == 0) ) {
+                    put(client_sock, path, extractedFile, file_partNum, &file_list);
+                }
+                
+                memset(&client_message, 0, MAXBUFSIZE);
+            }
             
+            if(read_size == 0) {
+                // printf("Client disconnected: %d\n", client_sock);
+                fflush(stdout);
+            } else if(read_size == -1) {
+                perror("recv failed");
+            }
             //Close sockets and terminate child process
             close(client_sock);
             exit(0);

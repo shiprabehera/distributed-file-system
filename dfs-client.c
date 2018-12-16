@@ -36,6 +36,480 @@ struct files_list_struct {
 };
 
 
+void list(int sock[], struct files_list_struct *file_list) {
+    int completeFile = 0;
+    char message[MAXBUFSIZE];
+    char buf[MAXBUFSIZE];
+    char file_buffer[MAXBUFSIZE];
+    int emptyFlag = 0;
+    int count;
+    int fileCount = 0;
+    int part;
+    int k = 0;
+    int index = 0;
+    snprintf(message, MAXBUFSIZE, "LIST / /");
+    int fileFlag = 0;
+    
+    memset(&file_list->file_name, 0, sizeof(file_list->file_name));
+    memset(&file_list->parts, 0, sizeof(file_list->parts));
+    file_list->count = 0;
+    
+    for(int i=0; i<4; i++) {
+        //printf("SERVER %d\n", i);
+        index = 0;
+        if(sock[i] != -1) {
+            send(sock[i], message, MAXBUFSIZE, 0);
+            if(recv(sock[i], &count, sizeof(count), 0) <= 0) {
+                continue;;
+            }
+            if(count == 2) {
+                emptyFlag = 1;
+            }
+            else {
+                emptyFlag = 0;
+                for (int j = 0; j<count; j++) {
+                    //receive file_name;
+                    memset(&buf, 0, MAXBUFSIZE);
+                    recv(sock[i], buf, MAXBUFSIZE, 0);
+                    if(strcmp(buf, ".\n") == 0) {
+                        continue;
+                    }
+                    else if(strcmp(buf, "..\n") == 0) {
+                        continue;
+                    }
+                    else {
+                        snprintf(file_buffer, MAXBUFSIZE, "%s", &buf[1]);
+                        k = strlen(file_buffer) - 1;
+                        while(k >= 0) {
+                            if(file_buffer[k] == '.') {
+                                part = file_buffer[k+1] - '0';
+                                file_buffer[k] = '\0';
+                                break;
+                            }
+                            k--;
+                        }
+                    }
+                    //printf("%s\t", file_buffer);
+                    //printf("%d\n", part);
+                    if(fileFlag == 0) {
+                        snprintf(file_list->file_name[index], MAXBUFSIZE, "%s", file_buffer);
+                        fileCount++;
+                        fileFlag = 1;
+                    }
+                    else {
+                        if(strcmp(file_list->file_name[index], file_buffer) != 0) {
+                            //printf("%s:%s\n", file_list->file_name[index], file_buffer);
+                            index++;
+                            fileCount++;
+                            snprintf(file_list->file_name[index], MAXBUFSIZE, "%s", file_buffer);
+                        }
+                    }
+                    //printf("%d:%d:%d\n", index, fileCount, part);
+                    file_list->parts[index][part-1] = 1;
+                    if(index > file_list->count) {
+                        file_list->count = index;
+                    }
+                }
+            }
+        }
+        
+    }
+    if(emptyFlag == 1) {
+        printf(".\n..\n");
+    }
+    else {
+        for(int i=0; i<=file_list->count; i++) {
+            //Check if we have all four parts
+            if(file_list->parts[i][0] == 1 && file_list->parts[i][1] == 1
+               && file_list->parts[i][2] == 1 && file_list->parts[i][3] == 1) {
+                
+                completeFile = 1;
+                file_list->parts[i][0] = 0;
+                file_list->parts[i][1] = 0;
+                file_list->parts[i][2] = 0;
+                file_list->parts[i][3] = 0;
+            }
+            
+            // Add "incomplete" to file name if we don't have enough parts
+            if(!completeFile) {
+                strcat(file_list->file_name[i], " [incomplete]");
+            }
+            strcat(file_list->file_name[i], "\n");
+            printf("%d. %s", i+1, file_list->file_name[i]);
+        }
+    }
+    //printf("Going back to client main()\n");
+}
+
+void send_file(int sock, int j, long part_size, FILE *part[4], struct conf_struct *conf_struct, long remainder) {
+    char file_buffer[MAXBUFSIZE];
+    unsigned char ch;
+    
+    int total = 0;
+    unsigned char key[MAXBUFSIZE];
+    int i = 0;
+    int nbytes = 0;
+    while(conf_struct->username[i] != '\0') {
+        key[i] = (unsigned char)conf_struct->username[i];
+        i++;
+    }
+    int k = 0;
+    while(conf_struct->password[k] != '\0') {
+        key[i] = (unsigned char)conf_struct->password[k];
+        k++;
+        i++;
+    }
+    key[i] = '\0';
+    
+    
+    unsigned long key_index = 0;
+    //Set file pointers to beginning of file
+    rewind(part[0]);
+    rewind(part[1]);
+    rewind(part[2]);
+    rewind(part[3]);
+    //Send file
+    while(total < part_size) {
+        if(j == 1) {
+            ch = fgetc(part[0]);
+        }
+        else if(j == 2) {
+            ch = fgetc(part[1]);
+        }
+        else if(j == 3) {
+            ch = fgetc(part[2]);
+        }
+        else {
+            ch = fgetc(part[3]);
+        }
+        if(key_index < strlen(conf_struct->username) + strlen(conf_struct->password)) {
+            ch = ch ^ key[key_index++];
+        }
+        nbytes = send(sock, &ch, sizeof(ch), 0);
+        
+        total += nbytes;
+        memset(&file_buffer, 0, MAXBUFSIZE);
+    }
+    while(total < part_size+remainder && j == 4) {
+        
+        ch = fgetc(part[3]);
+        if(key_index < (strlen(conf_struct->username) + strlen(conf_struct->password))) {
+            ch = ch ^ key[key_index++];
+        }
+        nbytes = send(sock, &ch, sizeof(ch), 0);
+        total += nbytes;
+        memset(&file_buffer, 0, MAXBUFSIZE);
+    }
+    
+}
+
+int mod_hash(char *num) {
+    int res = 0;
+    unsigned long i;
+    for(i = 0; i < strlen(num); i++) {
+        // handle cases where num[i] is a to f
+        switch(num[i]) {
+            case 'a':
+                num[i] = 10;
+                break;
+            case 'b':
+                num[i] = 11;
+                break;
+            case 'c':
+                num[i] = 12;
+                break;
+            case 'd':
+                num[i] = 13;
+                break;
+            case 'e':
+                num[i] = 14;
+                break;
+            case 'f':
+                num[i] = 15;
+                break;
+            default:
+                num[i] = num[i] - '0';
+        }
+        res = (res*16 + num[i]) % 4; // following the rule xy (mod a) ≡ ((x (mod a) * y) (mod a))
+    }
+    return res;
+}
+
+int hash_file(char *file_name) {
+    char command[MAXBUFSIZE];
+    snprintf(command, MAXBUFSIZE, "md5 %s", file_name);
+    FILE *f = popen(command, "r");
+    char buf[MAXBUFSIZE];
+    while (fgets(buf, sizeof(buf), f) != 0) {
+        //printf("%s\n", buf);
+    }
+    pclose(f);
+    buf[strlen(buf) - 1] = '\0';
+    int i = 0;
+    while(buf[i] != '=') {
+        i++;
+    }
+    
+    int hash = mod_hash(&buf[i+2]);
+    //printf("Hash Found: %d\n", hash);
+    return hash;
+}
+void put(int sock[], char* path, char* file_name, struct conf_struct *conf_struct) {
+    FILE *f, *part[4];
+    long file_size, part_size, remainder;
+    int hash;
+    char message[MAXBUFSIZE];
+    int j =0;
+    
+    //Create files to be written to
+    part[0] = tmpfile();
+    part[1] = tmpfile();
+    part[2] = tmpfile();
+    part[3] = tmpfile();
+    
+    f = fopen(file_name, "r+b");
+    //Read the size of the file and then return the pointer to beginning of file
+    fseek(f, 0, SEEK_END);
+    file_size = ftell(f);
+    rewind(f);
+    
+    part_size = file_size / 4;
+    remainder = file_size % 4;
+    
+    //printf("remainder: %ld\n", remainder);
+    
+    //Write the parts to the files
+    unsigned char ch;
+    int written =0;
+    while(!feof(f)) {
+        ch = fgetc(f);
+        if(written < part_size) {
+            fputc(ch, part[0]);
+        }
+        else if(written < (part_size * 2)) {
+            fputc(ch, part[1]);
+        }
+        else if(written < (part_size * 3)) {
+            fputc(ch, part[2]);
+        }
+        else {
+            fputc(ch, part[3]);
+        }
+        written++;
+    }
+    hash = hash_file(file_name);
+    //printf("chars written: %d\n", written);
+    int offlineServerCount =0;
+    for(int i=0; i<4; i++) {
+        if(sock[i] == -1) {
+            offlineServerCount++;
+        }
+    }
+    if(offlineServerCount>=1) {
+        printf("Too many servers offline to send file.\n");
+        return;
+    }
+    //Figure which parts to send to which server
+    //printf("hash: %d\n", hash);
+    switch(hash) {
+            //(1,2), (2,3), (3,4), (4,1)
+        case 0:
+            for(int i=0; i<4; i++) {
+                j = i+1;
+                //Correct j
+                if(j>4) {j = j-4;}
+                snprintf(message, MAXBUFSIZE, "%s %s %d", "PUT", path, j);
+                int n = send(sock[i], message, MAXBUFSIZE, 0); //Send command to server
+                
+                if(n < 0) {
+                    printf("Server shut down, trying next one.\n");
+                    continue;
+                }
+                if(j == 4) {
+                    part_size += remainder;
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size
+                    part_size -= remainder;
+                }
+                else {
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size of file
+                }                ////printf("%d,", j);
+
+                //Send first file
+                send_file(sock[i], j, part_size, part, conf_struct, remainder);
+                
+                memset(&message, 0, MAXBUFSIZE);
+                
+                j = i+2;
+                //Correct j
+                if(j>4) {j = j-4;}
+                snprintf(message, MAXBUFSIZE, "%s %s %d", "PUT", path, j);
+                send(sock[i], message, MAXBUFSIZE, 0); //Send command to server
+                if(j == 4) {
+                    part_size += remainder;
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size
+                    part_size -= remainder;
+                }
+                else {
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size of file
+                }                //printf("%d\n", j);
+
+                //Send the second file
+                send_file(sock[i], j, part_size, part, conf_struct, remainder);
+                
+                memset(&message, 0, MAXBUFSIZE);
+            }
+            break;
+            //(4,1), (1,2), (2,3), (3,4)
+        case 1:
+            for(int i=0; i<4; i++) {
+                j = i+4;
+                //Correct j
+                if(j>4) {j = j-4;}
+                snprintf(message, MAXBUFSIZE, "%s %s %d", "PUT", path, j);
+                int n = send(sock[i], message, MAXBUFSIZE, 0); //Send command to server
+                if(n < 0) {
+                    printf("Server offline down, trying next one. n: %d\n", n);
+                    continue;
+                }
+                if(j == 4) {
+                    part_size += remainder;
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size
+                    part_size -= remainder;
+                }
+                else {
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size of file
+                }                //printf("%d,", j);
+
+                //Send first file
+                send_file(sock[i], j, part_size, part, conf_struct, remainder);
+                
+                memset(&message, 0, MAXBUFSIZE);
+                
+                j = i+1;
+                //Correct j
+                if(j>4) {j = j-4;}
+                snprintf(message, MAXBUFSIZE, "%s %s %d", "PUT", path, j);
+                send(sock[i], message, MAXBUFSIZE, 0); //Send command to server
+                if(j == 4) {
+                    part_size += remainder;
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size
+                    part_size -= remainder;
+                }
+                else {
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size of file
+                }                //printf("%d\n", j);
+
+                //Send the second file
+                send_file(sock[i], j, part_size, part, conf_struct, remainder);
+                
+                memset(&message, 0, MAXBUFSIZE);
+            }
+            break;
+            //(3,4), (4,1), (1,2), (2,3)
+        case 2:
+            for(int i=0; i<4; i++) {
+                j = i+3;
+                //Correct j
+                if(j>4) {j = j-4;}
+                snprintf(message, MAXBUFSIZE, "%s %s %d", "PUT", path, j);
+                int n= send(sock[i], message, MAXBUFSIZE, 0); //Send command to server
+                if(n < 0) {
+                    printf("Server shut down, trying next one.\n");
+                    continue;
+                }
+                if(j == 4) {
+                    part_size += remainder;
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size
+                    part_size -= remainder;
+                }
+                else {
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size of file
+                }
+                //printf("%d,", j);
+
+                //Send first file
+                send_file(sock[i], j, part_size, part, conf_struct, remainder);
+                
+                memset(&message, 0, MAXBUFSIZE);
+                
+                j = i+4;
+                //Correct j
+                if(j>4) {j = j-4;}
+                snprintf(message, MAXBUFSIZE, "%s %s %d", "PUT", path, j);
+                send(sock[i], message, MAXBUFSIZE, 0); //Send command to server
+                if(j == 4) {
+                    part_size += remainder;
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size
+                    part_size -= remainder;
+                }
+                else {
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size of file
+                }
+                //printf("%d\n", j);
+
+                //Send the second file
+                send_file(sock[i], j, part_size, part, conf_struct, remainder);
+                
+                memset(&message, 0, MAXBUFSIZE);
+            }
+            break;
+            //(2,3), (3,4), (4,1), (1,2)
+        case 3:
+            for(int i=0; i<4; i++) {
+                j = i+2;
+                //Correct j
+                if(j>4) {j = j-4;}
+                snprintf(message, MAXBUFSIZE, "%s %s %d", "PUT", path, j);
+                int n =send(sock[i], message, MAXBUFSIZE, 0); //Send command to server
+                if(n < 0) {
+                    printf("Server shut down, trying next one.\n");
+                    continue;
+                }
+                if(j == 4) {
+                    part_size += remainder;
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size
+                    part_size -= remainder;
+                }
+                else {
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size of file
+                }
+                //printf("%d,", j);
+                //Send first file
+
+                send_file(sock[i], j, part_size, part, conf_struct, remainder);
+
+                
+                memset(&message, 0, MAXBUFSIZE);
+                
+                j = i+3;
+                //Correct j
+                if(j>4) {j = j-4;}
+                snprintf(message, MAXBUFSIZE, "%s %s %d", "PUT", path, j);
+                send(sock[i], message, MAXBUFSIZE, 0); //Send command to server
+                if(j == 4) {
+                    part_size += remainder;
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size
+                    part_size -= remainder;
+                }
+                else {
+                    send(sock[i], &part_size, sizeof(part_size), 0); //Send size of file
+                }
+                //printf("%d\n", j);
+                //Send the second file
+
+                send_file(sock[i], j, part_size, part, conf_struct, remainder);
+
+                memset(&message, 0, MAXBUFSIZE);
+            }
+            break;
+    }
+    fclose(part[0]);
+    fclose(part[1]);
+    fclose(part[2]);
+    fclose(part[3]);
+    fclose(f);
+}
+
 int get_conf(char *file_name, struct conf_struct *conf_struct) {
     FILE *f;
     f = fopen(file_name, "r");
@@ -87,7 +561,7 @@ int main(int argc, char *argv[]) {
     struct conf_struct conf_struct;
     memset(&conf_struct.username, 0, sizeof(conf_struct.username));
     memset(&conf_struct.password, 0, sizeof(conf_struct.password));
-
+    
     if(get_conf(file_name, &conf_struct) == 1) {
         struct sockaddr_in remote;
         struct files_list_struct file_list;
@@ -190,7 +664,11 @@ int main(int argc, char *argv[]) {
                 
                 
                 
-                if(strcmp(command, "exit\n") == 0) {
+                if(strcmp(command, "list\n") == 0) {
+                    list(sockets, &file_list);
+                } else if(strcmp(command, "put") == 0) {
+                    put(sockets, path, file, &conf_struct);
+                } else if(strcmp(command, "exit\n") == 0) {
                     printf("Closing sockets.\n");
                     //Close and cleanup sockets
                     for(int i = 0; i < 4; i++) {
