@@ -15,7 +15,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-#define MAXBUFSIZE 1024
+#define MAXBUFSIZE 4000
 #define NUMSERVERS 4
 #define SERVER 50
 #define LISTSIZE 4096
@@ -172,14 +172,11 @@ void send_file(int sock, int j, long part_size, FILE *part[4], struct conf_struc
     while(total < part_size) {
         if(j == 1) {
             ch = fgetc(part[0]);
-        }
-        else if(j == 2) {
+        } else if(j == 2) {
             ch = fgetc(part[1]);
-        }
-        else if(j == 3) {
+        } else if(j == 3) {
             ch = fgetc(part[2]);
-        }
-        else {
+        } else {
             ch = fgetc(part[3]);
         }
         if(key_index < strlen(conf_struct->username) + strlen(conf_struct->password)) {
@@ -199,15 +196,45 @@ void send_file(int sock, int j, long part_size, FILE *part[4], struct conf_struc
         nbytes = send(sock, &ch, sizeof(ch), 0);
         total += nbytes;
         memset(&file_buffer, 0, MAXBUFSIZE);
-    }
-    
+    }    
 }
-
-int mod_hash(char *num) {
+void receive_file(struct conf_struct *conf_struct, int sock, FILE *f) {
+    long file_size=0;
+    int total=0;
+    char *file_buffer[MAXBUFSIZE];
+    unsigned char ch;
+    unsigned char key[MAXBUFSIZE];
+    int i = 0;
+    int nbytes = 0;
+    while(conf_struct->username[i] != '\0') {
+        key[i] = (unsigned char)conf_struct->username[i];
+        i++;
+    }
+    int j = 0;
+    while(conf_struct->password[j] != '\0') {
+        key[i] = (unsigned char)conf_struct->password[j];
+        j++;
+        i++;
+    }
+    key[i] = '\0';
+    unsigned long key_index = 0;
+    recv(sock, &file_size, sizeof(file_size), 0); //Receive size of file of part x
+    //printf("file_size: %d\n", file_size);
+    while(total < file_size) {
+        nbytes = recv(sock, &ch, sizeof(ch), 0);
+        if(key_index < strlen(conf_struct->username) + strlen(conf_struct->password)) {
+            ch = ch ^ key[key_index++];
+        }
+        fputc(ch, f);
+        total += nbytes;
+        memset(&file_buffer, 0, MAXBUFSIZE);
+    }
+    fclose(f);
+}
+int get_hash(char *num) {
     int res = 0;
     unsigned long i;
     for(i = 0; i < strlen(num); i++) {
-        // handle cases where num[i] is a to f
         switch(num[i]) {
             case 'a':
                 num[i] = 10;
@@ -230,7 +257,7 @@ int mod_hash(char *num) {
             default:
                 num[i] = num[i] - '0';
         }
-        res = (res*16 + num[i]) % 4; // following the rule xy (mod a) ≡ ((x (mod a) * y) (mod a))
+        res = (res*16 + num[i]) % 4; // xy (mod a) ≡ ((x (mod a) * y) (mod a))
     }
     return res;
 }
@@ -250,8 +277,7 @@ int hash_file(char *file_name) {
         i++;
     }
     
-    int hash = mod_hash(&buf[i+2]);
-    //printf("Hash Found: %d\n", hash);
+    int hash = get_hash(&buf[i+2]);
     return hash;
 }
 void put(int sock[], char* path, char* file_name, struct conf_struct *conf_struct) {
@@ -510,6 +536,198 @@ void put(int sock[], char* path, char* file_name, struct conf_struct *conf_struc
     fclose(f);
 }
 
+void get(int sock[], char* path, char* file_name, struct conf_struct *conf_struct) {
+    char message[MAXBUFSIZE];
+    char buffer[MAXBUFSIZE];
+
+    snprintf(message, MAXBUFSIZE, "%s %s %d", "GET", path, 0);
+    
+    int fileparts[4] = {0,0,0,0};
+    
+    
+    
+    int offline_servers =0;
+    int complete_file = 1;
+    FILE *f;
+    
+    for(int i=0; i<4; i++) {
+        if(sock[i] == -1) {
+            offline_servers++;
+        }
+    }
+    //printf("offline: %d\n", offlineServerCount);
+    if(offline_servers>=3) {
+        complete_file = 0;
+    }
+    if(complete_file) {
+        int hash;
+        /*
+         x DFS1  DFS2   DFS3 DFS4
+         0 (1,2) (2,3) (3,4) (4,1)
+         1 (4,1) (1,2) (2,3) (3,4)
+         2 (3,4) (4,1) (1,2) (2,3)
+         3 (2,3) (3,4) (4,1) (1,2)
+         */
+        for(int i = 0; i < 4; i++) {
+            if(sock[i] != -1) {
+            send(sock[i], message, MAXBUFSIZE, 0);
+            recv(sock[i], &fileparts[i], sizeof(fileparts[i]), 0);
+            }
+            //printf("fileparts: %d\n", fileparts[i]);
+        }
+        
+        if(fileparts[0] == 12 || fileparts[1] == 23 || fileparts[2] == 34 || fileparts[3] == 14) {
+            hash = 0;
+        }
+        else if(fileparts[1] == 12 || fileparts[2] == 23 || fileparts[3] == 34 || fileparts[0] == 14) {
+            hash = 1;
+        }
+        else if(fileparts[2] == 12 || fileparts[3] == 23 || fileparts[0] == 34 || fileparts[1] == 14) {
+            hash = 2;
+        }
+        else {
+            hash = 3;
+        }
+        //printf("hash client: %d\n", hash);
+        switch(hash) {
+            case 0:
+                // (1,2) (2,3) (3,4) (4,1)
+                
+                // get part 1 and 2 from dfs1
+                // get part 3 and 4 from dfs3
+                if(sock[0] != -1 && sock[2] != -1) {
+                    //Parts 1 and 2
+                    //printf("Writing in file\n");
+                    f = fopen(file_name, "w+b");
+                    receive_file(conf_struct, sock[0], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[0], f);
+                    //Parts 3 and 4
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[2], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[2], f);
+                }
+                if(sock[1] != -1 && sock[3] != -1) {
+                    //Parts 1 and 2
+                    //printf("Writing in file\n");
+                    f = fopen(file_name, "w+b");
+                    receive_file(conf_struct, sock[3], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[1], f);
+                    //Parts 3 and 4
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[1], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[3], f);
+                }
+                break;
+            case 1:
+                // (4,1) (1,2) (2,3) (3,4)
+                
+                // get part 1 and 2 from dfs1
+                // get part 3 and 4 from dfs3
+                if(sock[0] != -1 && sock[2] != -1) {
+                    //Parts 1 and 2
+                    //printf("Writing in file\n");
+                    f = fopen(file_name, "w+b");
+                    receive_file(conf_struct, sock[0], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[0], f);
+                    //Parts 3 and 4
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[2], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[2], f);
+                }
+                if(sock[1] != -1 && sock[3] != -1) {
+                    //Parts 1 and 2
+                    //printf("Writing in file\n");
+                    f = fopen(file_name, "w+b");
+                    receive_file(conf_struct, sock[3], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[1], f);
+                    //Parts 3 and 4
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[1], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[3], f);
+                }
+                break;
+            
+            case 2:
+                // (3,4) (4,1) (1,2) (2,3)
+
+                if(sock[0] != -1 && sock[2] != -1) {
+                    //Parts 1 and 2
+                    //printf("Writing in file\n");
+                    f = fopen(file_name, "w+b");
+                    receive_file(conf_struct, sock[2], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[2], f);
+                    //Parts 3 and 4
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[0], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[0], f);
+                }
+                if(sock[1] != -1 && sock[3] != -1) {
+                    //Parts 1 and 2
+                    //printf("Writing in file\n");
+                    f = fopen(file_name, "w+b");
+                    receive_file(conf_struct, sock[1], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[3], f);
+                    //Parts 3 and 4
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[3], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[1], f);
+                }
+                break;
+            
+            case 3:
+                // (2,3) (3,4) (4,1) (1,2)
+                // get part 1 and 2 from dfs1
+                if(sock[0] != -1 && sock[2] != -1) {
+                    //printf("Writing in file\n");
+                    //Parts 1 and 2
+                    f = fopen(file_name, "w+b");
+                    receive_file(conf_struct, sock[2], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[0], f);
+                    //Parts 3 and 4
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[0], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[2], f);
+                    f = fopen(file_name, "rb");
+                    fgets(buffer, MAXBUFSIZE, f);
+                    printf("Buffer: %s\n", buffer);
+                }
+                if(sock[1] != -1 && sock[3] != -1) {
+                    //printf("Writing in file\n");
+                    //Parts 1 and 2
+                    f = fopen(file_name, "w+b");
+                    receive_file(conf_struct, sock[3], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[3], f);
+                    //Parts 3 and 4
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[1], f);
+                    f = fopen(file_name, "ab");
+                    receive_file(conf_struct, sock[1], f);
+                    f = fopen(file_name, "rb");
+                    fgets(buffer, MAXBUFSIZE, f);
+                    printf("Buffer: %s\n", buffer);
+                }
+                break;
+        }
+    }
+    else {
+        printf("File is incomplete, cannot be downloaded from server.\n");
+    }
+}
 int get_conf(char *file_name, struct conf_struct *conf_struct) {
     FILE *f;
     f = fopen(file_name, "r");
@@ -561,7 +779,7 @@ int main(int argc, char *argv[]) {
     struct conf_struct conf_struct;
     memset(&conf_struct.username, 0, sizeof(conf_struct.username));
     memset(&conf_struct.password, 0, sizeof(conf_struct.password));
-    
+
     if(get_conf(file_name, &conf_struct) == 1) {
         struct sockaddr_in remote;
         struct files_list_struct file_list;
@@ -668,6 +886,8 @@ int main(int argc, char *argv[]) {
                     list(sockets, &file_list);
                 } else if(strcmp(command, "put") == 0) {
                     put(sockets, path, file, &conf_struct);
+                } else if(strcmp(command, "get") == 0) {
+                    get(sockets, path, file, &conf_struct);
                 } else if(strcmp(command, "exit\n") == 0) {
                     printf("Closing sockets.\n");
                     //Close and cleanup sockets

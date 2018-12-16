@@ -15,7 +15,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-#define MAXBUFSIZE 1024
+#define MAXBUFSIZE 4000
 #define MAXUSERBUFSIZE 30
 #define MAXUSERS 10
 #define MAXFILES 25
@@ -103,8 +103,6 @@ void put(int sock, char* path, char* file_name, int file_part, struct files_list
 
         //Receive the size of the file
         recv(sock, &file_size, sizeof(file_size), 0);
-        // printf("File size: %d\n", file_size);
-
         while(total < file_size) {
             nbytes = recv(sock, &ch, sizeof(ch), 0);
             if(nbytes < 0) {
@@ -127,9 +125,95 @@ void put(int sock, char* path, char* file_name, int file_part, struct files_list
         }
         
     } else {
-        snprintf(return_message, MAXBUFSIZE, "Could not write to file.");
+        snprintf(return_message, MAXBUFSIZE, "File write not successful.");
         send(sock, return_message, MAXBUFSIZE, 0);
     }
+}
+
+void get(int sock, char *path, char *file_name) {
+    FILE *f;
+    int total = 0;
+    int nbytes;
+    char file_buffer[MAXBUFSIZE];
+    char path_buffer[MAXBUFSIZE];
+    unsigned char ch;
+    char return_message[MAXBUFSIZE];
+    char server_path[MAXBUFSIZE];
+    char buffer[MAXBUFSIZE];
+    snprintf(server_path, MAXBUFSIZE, "./%s.%s.", path, file_name);
+    int i;
+    int file_part = 0;
+    for(i = 1; i <= 4; i++) {
+        sprintf(buffer, "%s%d", server_path, i);
+        if((f = fopen(buffer, "r")) != NULL) {
+            file_part = file_part*10 + i;
+        }
+        fclose(f);
+    }
+    // now we have a 2 digit number
+    send(sock, &file_part, sizeof(file_part), 0);
+    
+    // send first file then second file
+    strcpy(path_buffer, server_path);
+    snprintf(server_path, MAXBUFSIZE, "%s%d", server_path, file_part/10);
+    f = fopen(server_path, "r+b");
+    if(f != NULL) {
+        fseek(f, 0, SEEK_END);
+        long file_size = ftell(f);
+        rewind(f);
+        send(sock, &file_size, sizeof(file_size), 0);
+        
+        while(total < file_size) {
+            //read in the file in blocks of MAXBUFSIZE, then send to client
+            ch = fgetc(f);
+            nbytes = send(sock, &ch, sizeof(ch), 0);
+            if(nbytes == -1) {
+                printf("Error sending file: %s\n", strerror(errno));
+                break;
+            }
+            
+            total += nbytes;
+            
+            //Clear the file buffer
+            //Useful for when data sent is less than MAXBUFSIZE (i.e. last packet)
+            memset(&file_buffer, 0, MAXBUFSIZE);
+        }
+    } else {
+        snprintf(return_message, MAXBUFSIZE, "Invalid file name. File does not exist.");
+        send(sock, return_message, MAXBUFSIZE, 0);
+    }
+    fclose(f);
+    total = 0;
+    int modFile = file_part % 10;
+    snprintf(path_buffer, MAXBUFSIZE, "%s%d", path_buffer, modFile);
+    strcpy(server_path, path_buffer);
+    f = fopen(server_path, "r+b");
+    if(f != NULL) {
+        fseek(f, 0, SEEK_END);
+        long file_size = ftell(f);
+        rewind(f);
+        send(sock, &file_size, sizeof(file_size), 0);
+        
+        while(total < file_size) {
+            //read in the file in blocks of MAXBUFSIZE, then send to client
+            ch = fgetc(f);
+            nbytes = send(sock, &ch, sizeof(ch), 0);
+            if(nbytes == -1) {
+                printf("Error sending file\n");
+                break;
+            }
+            
+            total += nbytes;
+            
+            //Clear the file buffer
+            //Useful for when data sent is less than MAXBUFSIZE (i.e. last packet)
+            memset(&file_buffer, 0, MAXBUFSIZE);
+        }
+    } else {
+        snprintf(return_message, MAXBUFSIZE, "Invalid file name. File does not exist.");
+        send(sock, return_message, MAXBUFSIZE, 0);
+    }
+    fclose(f);
 }
 int main(int argc , char *argv[]) {
     if(argc < 3) {
@@ -267,8 +351,8 @@ int main(int argc , char *argv[]) {
                 sscanf(client_message, "%s %s %s", user_cmd, user_file, file_part);
                 file_partNum = atoi(file_part);
                 
-                char extractedPath[MAXBUFSIZE];
-                char extractedFile[MAXBUFSIZE];
+                char extracted_path[MAXBUFSIZE];
+                char extracted_file[MAXBUFSIZE];
                 //Extract path and file_name into two parts
                 //Find the last occurence in the string
                 const char *dot = strrchr(user_file, '/');
@@ -276,14 +360,16 @@ int main(int argc , char *argv[]) {
                     // strcpy(dot, "\n");
                 }
                 char* token = strtok(user_file, dot);
-                snprintf(extractedPath, MAXBUFSIZE, "%s", token);
-                snprintf(extractedFile, MAXBUFSIZE, "%s", dot+1);
+                snprintf(extracted_path, MAXBUFSIZE, "%s", token);
+                snprintf(extracted_file, MAXBUFSIZE, "%s", dot+1);
                 printf("Path is %s ", path);
                 //Test against user commands and process requests
                 if( (strcmp(user_cmd, "LIST") == 0) || (strcmp(user_cmd, "list") == 0) ) {
                     list(client_sock, path);
                 } else if( (strcmp(user_cmd, "PUT") == 0) || (strcmp(user_cmd, "put") == 0) ) {
-                    put(client_sock, path, extractedFile, file_partNum, &file_list);
+                    put(client_sock, path, extracted_file, file_partNum, &file_list);
+                } else if( (strcmp(user_cmd, "GET") == 0) || (strcmp(user_cmd, "get") == 0) ) {
+                    get(client_sock, path, extracted_file);
                 }
                 
                 memset(&client_message, 0, MAXBUFSIZE);
