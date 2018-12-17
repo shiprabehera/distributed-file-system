@@ -21,8 +21,8 @@
 #define MAXFILES 25
 
 struct conf_struct {
-	char user_name[MAXUSERS][MAXUSERBUFSIZE];
-	char password[MAXUSERS][MAXUSERBUFSIZE];
+    char user_name[MAXUSERS][MAXUSERBUFSIZE];
+    char password[MAXUSERS][MAXUSERBUFSIZE];
 };
 
 struct files_list_struct {
@@ -43,15 +43,15 @@ int get_conf(char *file_name, struct conf_struct *conf_struct) {
         char temp_pass[MAXUSERBUFSIZE];
         int i = 0;
         while(fgets(file_buffer, MAXBUFSIZE, f) != NULL) {
-        	memset(&temp_user, 0, MAXUSERBUFSIZE);
-        	memset(&temp_pass, 0, MAXUSERBUFSIZE);
-        	sscanf(file_buffer, "%s %s", temp_user, temp_pass);
-        	strcpy(conf_struct->user_name[i], temp_user);
-        	strcpy(conf_struct->password[i], temp_pass);
-        	i++;
-        	if(i == MAXUSERS) {
-        		break;
-        	}
+            memset(&temp_user, 0, MAXUSERBUFSIZE);
+            memset(&temp_pass, 0, MAXUSERBUFSIZE);
+            sscanf(file_buffer, "%s %s", temp_user, temp_pass);
+            strcpy(conf_struct->user_name[i], temp_user);
+            strcpy(conf_struct->password[i], temp_pass);
+            i++;
+            if(i == MAXUSERS) {
+                break;
+            }
         }
     } else {
         fclose(f);
@@ -129,7 +129,18 @@ void put(int sock, char* path, char* file_name, int file_part, struct files_list
         send(sock, return_message, MAXBUFSIZE, 0);
     }
 }
+void subfolder(int sock, char *path, char *dir_name) {
 
+    char *result = malloc(strlen(path) + strlen(dir_name) + 1); // +1 for the null-terminator
+    // in real code you would check for errors in malloc here
+    strcpy(result, path);
+    strcat(result, dir_name);
+    //Create directory for users if none exists
+    struct stat st = {};
+    if(stat(result, &st) == -1) {
+        mkdir(result, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    }
+}
 void get(int sock, char *path, char *file_name) {
     FILE *f;
     int total = 0;
@@ -370,6 +381,8 @@ int main(int argc , char *argv[]) {
                     put(client_sock, path, extracted_file, file_partNum, &file_list);
                 } else if( (strcmp(user_cmd, "GET") == 0) || (strcmp(user_cmd, "get") == 0) ) {
                     get(client_sock, path, extracted_file);
+                } else if( (strcmp(user_cmd, "MKDIR") == 0) || (strcmp(user_cmd, "mkdir") == 0) ) {
+                    subfolder(client_sock, path, extracted_file);
                 }
                 
                 memset(&client_message, 0, MAXBUFSIZE);

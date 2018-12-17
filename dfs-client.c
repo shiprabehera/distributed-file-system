@@ -553,7 +553,19 @@ void put(int sock[], char* path, char* file_name, struct conf_struct *conf_struc
     fclose(part[3]);
     fclose(f);
 }
+void subfolder(int sock[], char* path, char* dir_name, struct conf_struct *conf_struct) {
+    char message[MAXBUFSIZE];
+    char buffer[MAXBUFSIZE];
 
+    snprintf(message, MAXBUFSIZE, "%s %s %d", "MKDIR", path, 0);
+    for(int i = 0; i < 4; i++) {
+        if(sock[i] != -1) {
+            int s = send(sock[i], message, MAXBUFSIZE, 0);
+            printf("ser stat s %d\n", s);
+        }
+    }
+    
+}
 void get(int sock[], char* path, char* file_name, struct conf_struct *conf_struct, struct sockaddr_in remote) {
     printf("here-----a \n");
     char message[MAXBUFSIZE];
@@ -609,7 +621,7 @@ void get(int sock[], char* path, char* file_name, struct conf_struct *conf_struc
             } else {
                 inc[i] = 1;
             }
-            //printf("fileparts: %d\n", fileparts[i]);
+            printf("fileparts: %d\n", inc[i]);
         }
         int missing = 0;
         //printf("fileparts[1]: %d\n", fileparts[1]);
@@ -958,6 +970,8 @@ int main(int argc, char *argv[]) {
                     put(sockets, path, file, &conf_struct);
                 } else if(strcmp(command, "get") == 0) {
                     get(sockets, path, file, &conf_struct, remote);
+                } else if(strcmp(command, "mkdir") == 0) {
+                    subfolder(sockets, path, file, &conf_struct);
                 } else if(strcmp(command, "exit\n") == 0) {
                     printf("Closing sockets.\n");
                     //Close and cleanup sockets
@@ -987,4 +1001,3 @@ int main(int argc, char *argv[]) {
     }
     
 }
-
