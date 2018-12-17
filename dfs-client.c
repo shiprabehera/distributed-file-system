@@ -37,6 +37,7 @@ struct files_list_struct {
 
 
 void list(int sock[], struct files_list_struct *file_list) {
+    //printf("here ------0 \n");
     int completeFile = 0;
     char message[MAXBUFSIZE];
     char buf[MAXBUFSIZE];
@@ -49,29 +50,38 @@ void list(int sock[], struct files_list_struct *file_list) {
     int index = 0;
     snprintf(message, MAXBUFSIZE, "LIST / /");
     int fileFlag = 0;
-    printf("here ------1 \n");
+    //printf("here ------1 \n");
     memset(&file_list->file_name, 0, sizeof(file_list->file_name));
     memset(&file_list->parts, 0, sizeof(file_list->parts));
     file_list->count = 0;
     
     for(int i=0; i<4; i++) {
+        //printf("here ------13 \n");
         index = 0;
         if(sock[i] != -1) {
             send(sock[i], message, MAXBUFSIZE, 0);
             if(recv(sock[i], &count, sizeof(count), 0) <= 0) {
-                continue;;
+                printf("here ------16 \n");
+                sock[i] = -1;
+                continue;
             }
-            printf("here ------5 \n");
+            //printf("here ------5 \n");
             if(count == 2) {
                 emptyFlag = 1;
             }
             else {
                 emptyFlag = 0;
                 for (int j = 0; j<count; j++) {
+                    //printf("here ------11 \n");
                     //receive file_name;
                     memset(&buf, 0, MAXBUFSIZE);
-                    recv(sock[i], buf, MAXBUFSIZE, 0);
-                    printf("here ------6 \n");
+                    //printf("here ------12 \n");
+                    if (recv(sock[i], buf, MAXBUFSIZE, 0) <= 0) {
+                        printf("here ------14 \n");
+                        sock[i] = -1;
+                        continue;
+                    }
+                    //printf("here ------6 \n");
                     if(strcmp(buf, ".\n") == 0) {
                         continue;
                     }
@@ -81,6 +91,7 @@ void list(int sock[], struct files_list_struct *file_list) {
                     else {
                         snprintf(file_buffer, MAXBUFSIZE, "%s", &buf[1]);
                         k = strlen(file_buffer) - 1;
+                        //printf("here ------7 \n");
                         while(k >= 0) {
                             if(file_buffer[k] == '.') {
                                 part = file_buffer[k+1] - '0';
@@ -92,6 +103,7 @@ void list(int sock[], struct files_list_struct *file_list) {
                     }
                     //printf("%s\t", file_buffer);
                     //printf("%d\n", part);
+                    //printf("here ------8 \n");
                     if(fileFlag == 0) {
                         snprintf(file_list->file_name[index], MAXBUFSIZE, "%s", file_buffer);
                         fileCount++;
@@ -105,22 +117,24 @@ void list(int sock[], struct files_list_struct *file_list) {
                             snprintf(file_list->file_name[index], MAXBUFSIZE, "%s", file_buffer);
                         }
                     }
+                    //printf("here ------9 \n");
                     //printf("%d:%d:%d\n", index, fileCount, part);
                     file_list->parts[index][part-1] = 1;
                     if(index > file_list->count) {
                         file_list->count = index;
                     }
+                    //printf("here ------10 \n");
                 }
             }
         }
         
     }
-    printf("here ------2 \n");
+    //printf("here ------2 \n");
     if(emptyFlag == 1) {
         printf(".\n..\n");
     }
     else {
-        printf("here ------3 \n");
+        //printf("here ------3 \n");
         for(int i=0; i<=file_list->count; i++) {
             //Check if we have all four parts
             if(file_list->parts[i][0] == 1 && file_list->parts[i][1] == 1

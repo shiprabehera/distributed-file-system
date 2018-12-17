@@ -95,7 +95,7 @@ void put(int sock, char* path, char* file_name, int file_part, struct files_list
     unsigned char ch;
 
     snprintf(server_path, MAXBUFSIZE, "./%s.%s.%d", path, file_name, file_part);
-    printf("Server path is %s", server_path);
+    //printf("Server path is %s", server_path);
     f = fopen(server_path, "w+b");
     if(f != NULL) {
         int total = 0;
@@ -362,7 +362,7 @@ int main(int argc , char *argv[]) {
                 char* token = strtok(user_file, dot);
                 snprintf(extracted_path, MAXBUFSIZE, "%s", token);
                 snprintf(extracted_file, MAXBUFSIZE, "%s", dot+1);
-                printf("Path is %s ", path);
+                //printf("Path is %s ", path);
                 //Test against user commands and process requests
                 if( (strcmp(user_cmd, "LIST") == 0) || (strcmp(user_cmd, "list") == 0) ) {
                     list(client_sock, path);
